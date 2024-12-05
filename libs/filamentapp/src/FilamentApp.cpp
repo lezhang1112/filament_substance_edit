@@ -1,3 +1,4 @@
+#include <memory>
 
 /*
  * Copyright (C) 2015 The Android Open Source Project
@@ -118,18 +119,63 @@ FilamentApp::~FilamentApp() {
     SDL_Quit();
 }
 
+
+#define PROGRESS_BAR_HEIGHT 8
 View* FilamentApp::getGuiView() const noexcept {
     return mImGuiHelper->getView();
 }
 
-void FilamentApp::run(const Config& config, SetupCallback setupCallback,
-        CleanupCallback cleanupCallback, ImGuiCallback imguiCallback,
+void FilamentApp::run(const Config& config, SetupCallback setupCallback, size_t bmpwidth, size_t bmpheight,const char* bmppath, const char* title_bmppath,
+        CleanupCallback cleanupCallback, ImGuiCallback imguiCallback, ImGuiNotifyCallback imguinotify,
         PreRenderCallback preRender, PostRenderCallback postRender,
         size_t width, size_t height) {
+
     mWindowTitle = config.title;
     std::unique_ptr<FilamentApp::Window> window(
             new FilamentApp::Window(this, config, config.title, width, height));
 
+   
+    int progress = 0;
+   
+   
+  
+   
+    SDL_Window* Texwindow = SDL_CreateWindow(
+        "SDL 图片渲染示例",
+        SDL_WINDOWPOS_CENTERED,
+        SDL_WINDOWPOS_CENTERED,
+        bmpwidth,
+        bmpheight,
+        SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS
+    );
+    int window_x = 0, window_y = 0;
+    SDL_GetWindowPosition(Texwindow, &window_x, &window_y);
+    auto screen = SDL_GetWindowSurface(Texwindow);
+    SDL_Surface* surface = SDL_LoadBMP(bmppath);
+    SDL_BlitSurface(surface, NULL, screen, NULL);
+    SDL_UpdateWindowSurface(Texwindow);
+    
+   
+    SDL_Window* Progresswindow = SDL_CreateWindow("Progress Bar", window_x, window_y + bmpheight, bmpwidth,  PROGRESS_BAR_HEIGHT, SDL_WINDOW_SHOWN | SDL_WINDOW_BORDERLESS);
+    SDL_Renderer* renderer = SDL_CreateRenderer(Progresswindow, -1, 0);
+    SDL_Rect progressBarRect = { 0, 0, bmpwidth, PROGRESS_BAR_HEIGHT };
+    SDL_Rect progressRect = { progressBarRect.x, progressBarRect.y, 0, progressBarRect.h };
+
+    SDL_SetRenderDrawColor(renderer, 0x00, 0x00, 0x00, 0xFF);
+    SDL_RenderFillRect(renderer, &progressBarRect);
+  
+    auto UpdataProgress = [&]()
+    {
+        progress+=15;
+        progressRect.w = (progress * bmpwidth) / 100;
+        SDL_SetRenderDrawColor(renderer, 0xDF, 0x77, 0x3C, 0xFF);
+        SDL_RenderFillRect(renderer, &progressRect);
+        SDL_RenderPresent(renderer);
+
+        //SDL_BlitSurface(surface, NULL, screen, NULL);
+       // SDL_UpdateWindowSurface(Texwindow);
+    };
+    UpdataProgress();
     mDepthMaterial = Material::Builder()
             .package(FILAMENTAPP_DEPTHVISUALIZER_DATA, FILAMENTAPP_DEPTHVISUALIZER_SIZE)
             .build(*mEngine);
@@ -146,6 +192,8 @@ void FilamentApp::run(const Config& config, SetupCallback setupCallback,
 
     std::unique_ptr<Cube> cameraCube{ new Cube(*mEngine, mTransparentMaterial, { 1, 0, 0 }) };
 
+    UpdataProgress();
+    std::unique_ptr<Cube> cameraCube(new Cube(*mEngine, mTransparentMaterial, {1,0,0}));
     // we can't cull the light-frustum because it's not applied a rigid transform
     // and currently, filament assumes that for culling
     std::vector<Cube> lightmapCubes;
@@ -158,12 +206,17 @@ void FilamentApp::run(const Config& config, SetupCallback setupCallback,
     mScene = mEngine->createScene();
 
     window->mMainView->getView()->setVisibleLayers(0x4, 0x4);
-
+    UpdataProgress();
     if (config.splitView) {
         auto& rcm = mEngine->getRenderableManager();
 
         rcm.setLayerMask(rcm.getInstance(cameraCube->getSolidRenderable()), 0x3, 0x2);
         rcm.setLayerMask(rcm.getInstance(cameraCube->getWireFrameRenderable()), 0x3, 0x2);
+
+        rcm.setLayerMask(rcm.getInstance(lightmapCube->getSolidRenderable()), 0x3, 0x2);
+        rcm.setLayerMask(rcm.getInstance(lightmapCube->getWireFrameRenderable()), 0x3, 0x2);
+
+        // Create the camera mesh
         mScene->addEntity(cameraCube->getWireFrameRenderable());
         mScene->addEntity(cameraCube->getSolidRenderable());
 
@@ -183,22 +236,31 @@ void FilamentApp::run(const Config& config, SetupCallback setupCallback,
         window->mGodView->getView()->setShadowingEnabled(false);
         window->mOrthoView->getView()->setShadowingEnabled(false);
     }
-
+    UpdataProgress();
     loadDirt(config);
     loadIBL(config);
+    if (mIBL != nullptr) {
+        mIBL->getSkybox()->setLayerMask(0x7, 0x4);
+        mScene->setSkybox(mIBL->getSkybox());
+        mScene->setIndirectLight(mIBL->getIndirectLight());
+    }
 
     for (auto& view : window->mViews) {
         if (view.get() != window->mUiView) {
             view->getView()->setScene(mScene);
         }
     }
-
-    setupCallback(mEngine, window->mMainView->getView(), mScene);
-
+    
+    UpdataProgress();
+    
     if (imguiCallback) {
+    
         mImGuiHelper = std::make_unique<ImGuiHelper>(mEngine, window->mUiView->getView(),
-            getRootAssetsPath() + "assets/fonts/Roboto-Medium.ttf");
+            getRootAssetsPath() + "assets/fonts/NotoSansSC-Medium.ttf",nullptr, imguinotify);
         ImGuiIO& io = ImGui::GetIO();
+
+        
+
         #ifdef WIN32
             SDL_SysWMinfo wmInfo;
             SDL_VERSION(&wmInfo.version);
@@ -234,16 +296,37 @@ void FilamentApp::run(const Config& config, SetupCallback setupCallback,
         };
         io.ClipboardUserData = nullptr;
     }
-
+    UpdataProgress();
     bool mousePressed[3] = { false };
 
     int sidebarWidth = mSidebarWidth;
     float cameraFocalLength = mCameraFocalLength;
     float cameraNear = mCameraNear;
     float cameraFar = mCameraFar;
-
+    setupCallback(mEngine, window->mMainView->getView(), mScene);
     SDL_EventState(SDL_DROPFILE, SDL_ENABLE);
     SDL_Window* sdlWindow = window->getSDLWindow();
+
+    // 加载图标图像
+    SDL_Surface* surfaceIcon = SDL_LoadBMP(title_bmppath);  // 假设图标图片是BMP格式
+    if (surfaceIcon) {
+        // 创建图标
+        SDL_SetWindowIcon(sdlWindow, surfaceIcon);
+    }
+
+   
+
+    UpdataProgress();
+    SDL_ShowWindow(sdlWindow);
+
+    SDL_DestroyRenderer(renderer);
+    SDL_DestroyWindow(Progresswindow);
+
+    SDL_DestroyWindow(Texwindow);
+    SDL_FreeSurface(surface);
+    
+
+
 
     while (!mClosed) {
         if (mWindowTitle != SDL_GetWindowTitle(sdlWindow)) {
@@ -493,16 +576,17 @@ void FilamentApp::run(const Config& config, SetupCallback setupCallback,
         }
 
         if (renderer->beginFrame(window->getSwapChain())) {
-            for (filament::View* offscreenView: mOffscreenViews) {
+            for (filament::View* offscreenView : mOffscreenViews) {
                 renderer->render(offscreenView);
             }
-            for (auto const& view: window->mViews) {
+            for (auto const& view : window->mViews) {
                 renderer->render(view->getView());
             }
             if (postRender) {
                 postRender(mEngine, window->mViews[0]->getView(), mScene, renderer);
             }
             renderer->endFrame();
+
         } else {
             ++mSkippedFrames;
         }
@@ -627,7 +711,7 @@ FilamentApp::Window::Window(FilamentApp* filamentApp,
         : mFilamentApp(filamentApp), mConfig(config), mIsHeadless(config.headless) {
     const int x = SDL_WINDOWPOS_CENTERED;
     const int y = SDL_WINDOWPOS_CENTERED;
-    uint32_t windowFlags = SDL_WINDOW_SHOWN | SDL_WINDOW_ALLOW_HIGHDPI;
+    uint32_t windowFlags = SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI;
     if (config.resizeable) {
         windowFlags |= SDL_WINDOW_RESIZABLE;
     }
@@ -639,7 +723,7 @@ FilamentApp::Window::Window(FilamentApp* filamentApp,
     // Even if we're in headless mode, we still need to create a window, otherwise SDL will not poll
     // events.
     mWindow = SDL_CreateWindow(title.c_str(), x, y, (int) w, (int) h, windowFlags);
-
+  
     auto const createEngine = [&config, this]() {
         auto backend = config.backend;
 
@@ -751,11 +835,13 @@ FilamentApp::Window::Window(FilamentApp* filamentApp,
 
     // set-up the camera manipulators
     mMainCameraMan = CameraManipulator::Builder()
-            .targetPosition(0, 0, -4)
+            .targetPosition(0, 0, 0)
+            .orbitHomePosition(0, 0, 3)
             .flightMoveDamping(15.0)
             .build(config.cameraMode);
     mDebugCameraMan = CameraManipulator::Builder()
-            .targetPosition(0, 0, -4)
+            .targetPosition(0, 0, 0)
+            .orbitHomePosition(0, 0, 3)
             .flightMoveDamping(15.0)
             .build(config.cameraMode);
 
@@ -793,6 +879,10 @@ FilamentApp::Window::~Window() {
 }
 
 void FilamentApp::Window::mouseDown(int button, ssize_t x, ssize_t y) {
+    
+    if (button == 3) {
+        return;
+    }
     fixupMouseCoordinatesForHdpi(x, y);
     y = mHeight - y;
     for (auto const& view : mViews) {
@@ -805,6 +895,7 @@ void FilamentApp::Window::mouseDown(int button, ssize_t x, ssize_t y) {
 }
 
 void FilamentApp::Window::mouseWheel(ssize_t x) {
+    x = 0;
     if (mMouseEventTarget) {
         mMouseEventTarget->mouseWheel(x);
     } else {
@@ -818,6 +909,7 @@ void FilamentApp::Window::mouseWheel(ssize_t x) {
 }
 
 void FilamentApp::Window::mouseUp(ssize_t x, ssize_t y) {
+
     fixupMouseCoordinatesForHdpi(x, y);
     if (mMouseEventTarget) {
         y = mHeight - y;
@@ -827,6 +919,7 @@ void FilamentApp::Window::mouseUp(ssize_t x, ssize_t y) {
 }
 
 void FilamentApp::Window::mouseMoved(ssize_t x, ssize_t y) {
+  
     fixupMouseCoordinatesForHdpi(x, y);
     y = mHeight - y;
     if (mMouseEventTarget) {
@@ -932,11 +1025,14 @@ void FilamentApp::Window::configureCamerasForWindow() {
     const float3 at(0, 0, -4);
     const double ratio = double(height) / double(width);
     const int sidebar = mFilamentApp->mSidebarWidth * dpiScaleX;
-
+    const int leftsidebar = mFilamentApp->mLeftSidebarWidth * dpiScaleX;
+    const int topmenu = mFilamentApp->mTopMenuHeight * dpiScaleY;
     const bool splitview = mViews.size() > 2;
 
-    const uint32_t mainWidth = std::max(2, (int) width - sidebar);
-
+    // To trigger a floating-point exception, users could shrink the window to be smaller than
+    // the sidebar. To prevent this we simply clamp the width of the main viewport.
+    const uint32_t mainWidth = splitview ? width : std::max(1, (int) width - sidebar - leftsidebar);
+    const uint32_t mainHeight = splitview ? height : std::max(1, (int)height - topmenu);
     double near = mFilamentApp->mCameraNear;
     double far = mFilamentApp->mCameraFar;
     if (mMainView->getView()->getStereoscopicOptions().enabled) {
@@ -950,25 +1046,25 @@ void FilamentApp::Window::configureCamerasForWindow() {
     } else {
         mMainCamera->setLensProjection(mFilamentApp->mCameraFocalLength, 1.0, near, far);
     }
-    mDebugCamera->setProjection(45.0, double(mainWidth) / height, 0.0625, 4096, Camera::Fov::VERTICAL);
+    mDebugCamera->setProjection(45.0, double(width) / height, 0.0625, 4096, Camera::Fov::VERTICAL);
 
-    auto aspectRatio = double(mainWidth) / height;
+    auto aspectRatio = double(mainWidth) / mainHeight;
     if (mMainView->getView()->getStereoscopicOptions().enabled) {
         const int ec = mConfig.stereoscopicEyeCount;
-        aspectRatio = double(mainWidth) / ec / height;
+        aspectRatio = double(mainWidth) / ec / mainHeight;
     }
     mMainCamera->setScaling({1.0 / aspectRatio, 1.0});
 
     // We're in split view when there are more views than just the Main and UI views.
     if (splitview) {
-        uint32_t const vpw = mainWidth / 2;
-        uint32_t const vph = height / 2;
-        mMainView->setViewport ({ sidebar +            0,            0, vpw, vph });
-        mDepthView->setViewport({ sidebar + int32_t(vpw),            0, vpw, vph });
-        mGodView->setViewport  ({ sidebar + int32_t(vpw), int32_t(vph), vpw, vph });
-        mOrthoView->setViewport({ sidebar +            0, int32_t(vph), vpw, vph });
+        uint32_t vpw = width / 2;
+        uint32_t vph = height / 2;
+        mMainView->setViewport ({            0,            0, vpw,         vph          });
+        mDepthView->setViewport({ int32_t(vpw),            0, width - vpw, vph          });
+        mGodView->setViewport  ({ int32_t(vpw), int32_t(vph), width - vpw, height - vph });
+        mOrthoView->setViewport({            0, int32_t(vph), vpw,         height - vph });
     } else {
-        mMainView->setViewport({ sidebar, 0, mainWidth, height });
+        mMainView->setViewport({ /*sidebar*/leftsidebar, topmenu, mainWidth, mainHeight });
     }
     mUiView->setViewport({ 0, 0, width, height });
 }
