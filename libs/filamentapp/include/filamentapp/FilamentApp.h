@@ -59,6 +59,7 @@ class VulkanPlatform;
 class FilamentApp {
 public:
     using SetupCallback = std::function<void(filament::Engine*, filament::View*, filament::Scene*)>;
+    using LoadResourceCallback = std::function<void(filament::Engine*, filament::View*, filament::Scene*)>;
     using CleanupCallback =
             std::function<void(filament::Engine*, filament::View*, filament::Scene*)>;
     using PreRenderCallback = std::function<void(filament::Engine*, filament::View*,
@@ -69,7 +70,7 @@ public:
     using AnimCallback = std::function<void(filament::Engine*, filament::View*, double now)>;
     using ResizeCallback = std::function<void(filament::Engine*, filament::View*)>;
     using DropCallback = std::function<void(std::string_view)>;
-
+    using ImGuiNotifyCallback = std::function<void()>;
     static FilamentApp& get();
 
     ~FilamentApp();
@@ -80,8 +81,8 @@ public:
 
     void setDropHandler(DropCallback handler) { mDropHandler = handler; }
 
-    void run(const Config& config, SetupCallback setup, CleanupCallback cleanup,
-            ImGuiCallback imgui = ImGuiCallback(), PreRenderCallback preRender = PreRenderCallback(),
+    void run(const Config& config, SetupCallback setup, size_t bmpwidth, size_t bmpheight, const char* bmppath,  const char* title_bmppath, CleanupCallback cleanup,
+            ImGuiCallback imgui = ImGuiCallback(), ImGuiNotifyCallback imguinotify = ImGuiNotifyCallback(), PreRenderCallback preRender = PreRenderCallback(),
             PostRenderCallback postRender = PostRenderCallback(),
             size_t width = 1024, size_t height = 640);
 
@@ -94,7 +95,8 @@ public:
     filament::View* getGuiView() const noexcept;
 
     void close() { mClosed = true; }
-
+    void setLeftSidebarWidth(int width) { mLeftSidebarWidth = width; }
+    void setTopMenuHeight(int height) { mTopMenuHeight = height; }
     void setSidebarWidth(int width) { mSidebarWidth = width; }
     void setWindowTitle(const char* title) { mWindowTitle = title; }
     void setCameraFocalLength(float focalLength) { mCameraFocalLength = focalLength; }
@@ -250,6 +252,8 @@ private:
     ResizeCallback mResize;
     DropCallback mDropHandler;
     int mSidebarWidth = 0;
+    int mLeftSidebarWidth = 0;
+    int mTopMenuHeight = 0;
     size_t mSkippedFrames = 0;
     std::string mWindowTitle;
     std::vector<filament::View*> mOffscreenViews;
